@@ -1,6 +1,4 @@
-//testando salvar versões
-//teste novamente
-//teste 3
+//teste sincronização
 void setup() {
   // put your setup code here, to run once:
 
