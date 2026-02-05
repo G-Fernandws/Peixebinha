@@ -1,5 +1,5 @@
-Repositório para alocar a programação principal do Peixebinha.
-Sensores utilizados: 
+Repositório de programações do Peixebinha.
+Sensores: 
   * pH;
   * Condutividade Elétrica;
   * Temperatura;
