@@ -1,39 +1,55 @@
+//inclui as bibliotecas do sensor 
+#include <OneWire.h>
 #include <DallasTemperature.h>
- 
-#define DS18B20_OneWire 2
- 
+
+#define DS18B20_OneWire 4   // Pino digital do ESP32
+
+//chama as bibliotecas do sensor 
 OneWire oneWire(DS18B20_OneWire);
- 
 DallasTemperature sensortemp(&oneWire);
- 
-int ndispositivos = 0;
+
+int ndispositivos = 0; //para detectar se o sensor foi detectado 
 float grausC;
- 
-void setup()  {
-  sensortemp.begin(); 
+
+void setup()  
+{
   Serial.begin(9600);
- 
-  Serial.println("Localizando Dispositivos ...");
+
+  //Inicializa o barramento OneWire e procura sensores conectados.
+
+  sensortemp.begin(); 
+
+  Serial.println("Localizando Dispositivos DS18B20...");
+  //chama a função de detectar dispositivos
+  ndispositivos = sensortemp.getDeviceCount(); 
   Serial.print("Encontrados ");
-  ndispositivos = sensortemp.getDeviceCount();
-  Serial.print(ndispositivos, DEC);
+  Serial.print(ndispositivos);
   Serial.println(" dispositivos.");
   Serial.println("");
 }
- 
-void loop() { 
+
+void loop() {
+
+  /*
+    Solicita ao sensor que faça a leitura da temperatura.
+    O DS18B20 mede e armazena o valor internamente.
+  */
   sensortemp.requestTemperatures(); 
- 
-  for (int i = 0;  i < ndispositivos;  i++) {
+
+  //Percorre todos os sensores conectados no barramento, apenas por segurança
+  for (int i = 0; i < ndispositivos; i++) {
+
     Serial.println("Graus Celsius:");
     Serial.print("Sensor ");
-    Serial.print(i+1);
+    Serial.print(i + 1);
     Serial.print(": ");
+
     grausC = sensortemp.getTempCByIndex(i);
+
     Serial.print(grausC);
-    Serial.println("ºC");
+    Serial.println(" ºC");
   }
-  
+
   Serial.println("");
   delay(1000);
 }
