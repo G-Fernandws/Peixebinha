@@ -1,20 +1,23 @@
-const int sensorPin = A0;
-const float Vref = 5.0;
-const float Rfix = 10000.0;
+//Atualizado para uso no ESP32
+const int sensorPin = 32;
+const float Vref = 3.3;
 
 // Quantidade de padrões de calibração
 const int N = 5;
 
-// Arrays com calibração
-float R_values[N];      // Resistências lidas
-float EC_values[N];     // Condutividades conhecidas (µS/cm)
+// Vetores para armazenar os dados experimentais, usados para calibrar a curva
+float V_values[N];   // Tensões medidas para cada soluçã
+ /*Condutividades conhecidas (µS/cm) dessas 
+ soluções, digitadas no monitor serial*/
+float EC_values[N];    
 
-// Coeficientes da curva EC = aR² + bR + c
+// Coeficientes do polinômio: EC = a·V² + b·V + c
 float a = 0, b = 0, c = 0;
 
-bool calibrated = false;
+bool calibrated = false; //para evitar repetição do processo
 
-void setup() {
+void setup() 
+{
   Serial.begin(9600);
   delay(1000);
 
@@ -23,9 +26,13 @@ void setup() {
   Serial.println("As unidades sao em microsiemens (uS/cm).");
 }
 
-void loop() {
+/* - Primeiro executa a calibração (uma única vez)
+   - Depois passa a medir continuamente*/
+void loop() 
+{
 
-  if (!calibrated) {
+  if (!calibrated) 
+  {
     realizarCalibracao();
     calcularCoeficientes();
     calibrated = true;
@@ -34,39 +41,57 @@ void loop() {
     Serial.print("a = "); Serial.println(a, 10);
     Serial.print("b = "); Serial.println(b, 10);
     Serial.print("c = "); Serial.println(c, 10);
-    Serial.println("Agora medindo condutividade...");
+    Serial.println("Iniciando medicoes...");
     delay(2000);
   }
 
-  // ------------------------
-  // Medição usando curva
-  // ------------------------
-
+// Medição usando curva
+ /* 1) Lê o valor do ADC (0–4095)
+    2) Converte para tensão real (0–3.3V)
+    3) Aplica a equação da calibração*/
   int adc = analogRead(sensorPin);
-  float V = adc * (Vref / 1023.0);
-  float R = Rfix * ((Vref / V) - 1.0);
+  float V = adc * (Vref / 4095.0); //converte o valor digital em tensão real
+  float EC = a * V * V + b * V + c;  // Aplica o polinômio ajustado na calibração
 
-  // Usa a curva polinomial
+  /* Usa a curva polinomial para ajustar melhor, 
+  se fosse equação de reta não ia ser um ajuste adequado*/
   float EC = a * R * R + b * R + c;
 
-  Serial.print("R = ");
-  Serial.print(R, 1);
-  Serial.print(" ohms | EC = ");
+ // Mostra os resultados
+  Serial.print("ADC = ");
+  Serial.print(adc);
+
+  Serial.print(" | V = ");
+  Serial.print(V, 3);
+  Serial.print(" V");
+
+  Serial.print(" | EC = ");
   Serial.print(EC, 1);
   Serial.println(" uS/cm");
 
   delay(500);
+
 }
+/*
+  ============================================================
+  FUNÇÃO: REALIZAR CALIBRAÇÃO
+  ============================================================
+  Para cada solução padrão:
+  1) Digita a condutividade conhecida
+  2) Coloca o sensor na solução
+  3) O sistema mede a tensão média (30 leituras)
+  4) Armazena o par:
+       (Tensão medida, EC conhecida)
+  Esses dados serão usados para ajustar a curva.
+*/
 
-
-// ===========================================================
-// FUNÇÃO DE CALIBRAÇÃO — Lê resistência para cada solução padrão
-// ===========================================================
-void realizarCalibracao() {
-  for (int i = 0; i < N; i++) {
+void realizarCalibracao() 
+{
+  for (int i = 0; i < N; i++) 
+  {
 
     Serial.println("\nDigite no monitor serial o valor da solucao padrao (uS/cm):");
-    while (Serial.available() == 0) {}
+    while (Serial.available() == 0) {} //recebe a EC conhecida
     EC_values[i] = Serial.parseFloat();
     Serial.print("Valor recebido: ");
     Serial.println(EC_values[i]);
@@ -75,36 +100,47 @@ void realizarCalibracao() {
     while (Serial.available() == 0) {}
     Serial.read(); // limpa buffer
 
-    // faz uma média da resistência
-    float soma = 0;
-    for (int j = 0; j < 30; j++) {
-      int adc = analogRead(sensorPin);
-      float V = adc * (Vref / 1023.0);
-      float R = Rfix * ((Vref / V) - 1.0);
-      soma += R;
+    // faz uma média da resistência, 30 leituras
+    float somaV = 0;
+    for (int j = 0; j < 30; j++) 
+    {
+       int adc = analogRead(sensorPin);
+      float V = adc * (Vref / 4095.0);
+      somaV += V;
       delay(50);
     }
 
-    R_values[i] = soma / 30.0;
+    // Tensão média medida nessa solução
+    V_values[i] = somaV / 30.0;
 
-    Serial.print("Resistencia medida: ");
-    Serial.println(R_values[i], 1);
+    Serial.print("Tensao media medida: ");
+    Serial.print(V_values[i], 4);
+    Serial.println(" V");
   }
 }
+/*
+  ============================================================
+  FUNÇÃO: AJUSTE POLINOMIAL DE 2º GRAU
+  ============================================================
+  Curva a ser ajustada usando os N pontos coletados:
+    EC = a·V² + b·V + c
+  O código vai resolver o sistema por mínimos quadrados,
+  montando as somas estatísticas e aplicando o método
+  dos determinantes (Cramer).
+*/
+void calcularCoeficientes()
+{
 
-
-// ===========================================================
-// FUNÇÃO: AJUSTE POLINOMIAL DE 2º GRAU
-// Resolve os coeficientes a, b, c da curva EC = aR² + bR + c
-// ===========================================================
-void calcularCoeficientes() {
-
-  // Matriz para soma dos termos
+  // Matriz para soma dos termos, resolve por mínimos quadrados
+  /*Sx = soma de R    | Sx2 = soma de R^2 | Sx3 = soma de R^3
+    Sx4 = soma de R^4 | Sy =  soma de EC  | Sxy = soma de R*EC 
+    Sx2y = soma de R^2 *EC */
   float Sx = 0, Sx2 = 0, Sx3 = 0, Sx4 = 0;
   float Sy = 0, Sxy = 0, Sx2y = 0;
 
-  for (int i = 0; i < N; i++) {
-    float x = R_values[i];
+  for (int i = 0; i < N; i++) 
+  {
+    float x = V_values[i];
     float y = EC_values[i];
 
     Sx += x;
@@ -117,7 +153,8 @@ void calcularCoeficientes() {
     Sx2y += x * x * y;
   }
 
-  // Resolver o sistema linear
+  // Resolver o sistema linear com 3 icógnitas por meio de determinantes
+  //basicamente o método de Cramer
   float D  = N * (Sx2 * Sx4 - Sx3 * Sx3)
            - Sx * (Sx * Sx4 - Sx2 * Sx3)
            + Sx2 * (Sx * Sx3 - Sx2 * Sx2);
