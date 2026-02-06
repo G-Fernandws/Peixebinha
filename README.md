@@ -5,7 +5,9 @@ Sensores:
 * Condutividade Elétrica;
 * Temperatura;
 * Turbidímetro.
-  PINOS DOS SENSORES NA PROGRAMAÇÃO PRINCIPAL
+
+
+PINOS DOS SENSORES NA PROGRAMAÇÃO PRINCIPAL
   pH 				gpio 34
 
 &nbsp;	Condutividade 	gpio 32
