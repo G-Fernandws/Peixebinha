@@ -1,73 +1,127 @@
 /*
-ESP32 Turbidity Sensor
-by Roland Pelayo
-for TeachMeMicro
+LÓGICA BÁSICA DA CALIBRAÇÃO:
+* O sensor gera uma tensão analógica proporcional à turbidez.
+* Água limpa → maior tensão
+* Água turva → menor tensão
 
-Rev 1.0 - May 22, 2020
+Registra 2 valores, depois, todas as leituras serão
+normalizadasentre esses dois extremos.
 
-Full tutorial on https://www.teachmemicro.com/esp32-turbidity-Sensor
+1. Tensão em água limpa  → Vclear
+2. Tensão em água turva → Vdirty
 */
-#include <WiFi.h>
-#include <WiFiClient.h>
-#include <WebServer.h>
-#include "mainpage.h"
-#include "jscript.h"
 
-//provide your own WiFi SSID and password
-const char* ssid = "<your WiFI SSID>";
-const char* password = "<your WiFi Password>";
+const int turbidezPin = 35;
 
-WebServer server(80);
+const float Vref = 3.3;     // Tensão máxima do ADC do ESP32
+const int ADCmax = 4095;    // Resolução 12 bits
 
-//For storing data as string
-String text= "";
-//Sensor data
-double turbidity;
+//variáveis de calibração
+float Vclear = 0;   // tensão medida em água limpa
+float Vdirty = 0;   // tensão medida em água muito turva
 
-void setup(void) {
-  //For debugging
-  Serial.begin(9600);
-  //Use ESP32 as WiFi Station
-  WiFi.mode(WIFI_STA);
-  //Initiate WiFi Connection
-  WiFi.begin(ssid, password);
-  Serial.println("");
-  // Wait for connection
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println("");
-  Serial.print("Connected to ");
-  //Print your WiFi's SSID (might be insecure)
-  Serial.println(ssid);
-  Serial.print("IP address: ");
-  //Print your local IP address (needed for browsing the app)
-  Serial.println(WiFi.localIP());
-  //Page for reading data. Sensor is read in this part
-  server.on("/data", [](){
-    delay(100);
-    int val = analogRead(36);
-    turbidity = map(val, 0, 2800, 5, 1); 
-    text = (String)turbidity;
-    Serial.println(val);
-    server.send(200, "text/plain", text);
-  });
-  //Home page. Contents of 'page' is in mainpage.h
-  server.on("/", []() {
-   server.send(200, "text/html", page);
-  });
-  //JavaScript! Contents of 'javascript' is in jscript.h
-  server.on("/jscript.js", []() {
-   server.send(200, "text/javascript", javascript);
-  });
-  //start web server
-  server.begin();
-  //Just stating things
-  Serial.println("HTTP server started");
+bool calibrado = false;
+
+void setup()
+{
+Serial.begin(115200);
+delay(2000);
+
+Serial.println("=== SENSOR DE TURBIDEZ - ESP32 ===");
+Serial.println("Calibracao em 2 etapas:");
+Serial.println("1) Agua limpa");
+Serial.println("2) Agua turva");
+Serial.println("");
 }
 
-void loop(void) {
-  //Make the ESP32 always handle web clients
-  server.handleClient();
+void loop()
+{
+/*Executa calibração apenas uma vez,
+outra forma de assegurar que a calibração
+não vai se repetir*/
+  if (!calibrado) 
+  {
+  calibrarSensor();
+  calibrado = true;
+  }
+
+int adc = analogRead(turbidezPin);
+
+// Converte leitura ADC para tensão
+float V = adc * (Vref / ADCmax);
+
+// Normaliza o valor entre os extremos calibrados
+float turbidezRelativa = (Vclear - V) / (Vclear - Vdirty);
+
+// Limita entre 0 e 1 pois a sensibilidade
+// do sensor é baixa demais
+if (turbidezRelativa < 0) turbidezRelativa = 0;
+if (turbidezRelativa > 1) turbidezRelativa = 1;
+
+// Mostra dados
+Serial.print("ADC: ");
+Serial.print(adc);
+
+Serial.print(" | Tensao: ");
+Serial.print(V, 3);
+Serial.print(" V");
+
+Serial.print(" | Turbidez relativa: ");
+Serial.print(turbidezRelativa * 100);
+Serial.println(" %");
+
+delay(1000);
+}
+
+// FUNÇÃO DE CALIBRAÇÃO
+void calibrarSensor()
+{
+
+Serial.println("=== INICIANDO CALIBRACAO ===");
+
+
+// AGUA LIMPA
+Serial.println("\nColoque o sensor em AGUA LIMPA e pressione ENTER");
+esperarEnter();
+
+Vclear = mediaTensao();
+
+Serial.print("Tensao agua limpa: ");
+Serial.println(Vclear, 3);
+
+// PASSO 2 - AGUA TURVA
+Serial.println("\nAgora coloque o sensor em AGUA TURVA e pressione ENTER");
+esperarEnter();
+
+Vdirty = mediaTensao();
+
+Serial.print("Tensao agua turva: ");
+Serial.println(Vdirty, 3);
+
+Serial.println("\nCalibracao finalizada!");
+}
+
+// FUNÇÃO: ESPERA ENTER NO MONITOR SERIAL
+void esperarEnter()
+{
+while (Serial.available() == 0) {}
+while (Serial.available() > 0) Serial.read();
+}
+
+// FUNÇÃO: CALCULA MÉDIA DA TENSÃO (reduz ruído nas leituras)
+float mediaTensao()
+{
+
+float soma = 0;
+
+//coloquei 50 pois as leituras são muito instáveis
+for (int i = 0; i < 50; i++) 
+{
+int adc = analogRead(turbidezPin);
+float V = adc * (Vref / ADCmax);
+soma += V;
+delay(40);
+}
+
+return soma / 50.0;
 }
