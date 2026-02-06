@@ -1,0 +1,1 @@
+Projeto interessante, leitura do sensor integrada com um aplicativo: https://www.teachmemicro.com/esp32-turbidity-sensor/
