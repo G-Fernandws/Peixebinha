@@ -2,7 +2,7 @@
 #include <OneWire.h>
 #include <DallasTemperature.h>
 
-#define DS18B20_OneWire 4   // Pino digital do ESP32
+#define DS18B20_OneWire 22   // Pino digital do ESP32
 
 //chama as bibliotecas do sensor 
 OneWire oneWire(DS18B20_OneWire);
@@ -13,7 +13,7 @@ float grausC;
 
 void setup()  
 {
-  Serial.begin(9600);
+  Serial.begin(115200);
 
   //Inicializa o barramento OneWire e procura sensores conectados.
 
