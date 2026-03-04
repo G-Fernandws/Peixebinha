@@ -11,9 +11,9 @@ const float Vref = 3.3;     // Referência do ESP32
 const float Rfix = 10000.0;
 
 // Coeficientes do ajuste em 1/R
-const double A = -2.564676647e11;
-const double B =  3.870610649e07;
-const double C = -1.846756580e+01;
+const double A = 105.6557540894;
+const double B = 707.6928710938;
+const double C = 114.1587142944;
 
 // ------- Filtro Média Móvel -------
 const int window = 10;
