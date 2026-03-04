@@ -1,8 +1,3 @@
-// ============================================
-// SENSOR DE CONDUTIVIDADE - ESP32 DOIT DEVKIT V1
-// GPIO 32 (ADC1_CH4)
-// ============================================
-
 const int sensorPin = 32;      // GPIO 32
 const float Vref = 3.3;        // Tensão de referência do ESP32
 const int N = 5;               // Número de soluções padrão

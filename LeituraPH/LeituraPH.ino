@@ -1,4 +1,3 @@
-
 #include <Wire.h>
 //#include <LiquidCrystal_I2C.h>
 
@@ -76,7 +75,7 @@ void loop() {
     valorMedio += buf[i];
   }
 
-  float tensao = (valorMedio * 5.0) / 1024.0 / 6;  // Realiza a média e \
+  float tensao = (valorMedio * 3.3) / 1024.0 / 6;  // Realiza a média e \
                                                     transforma o valor \
                                                     analógico em volt
   float ph = m * tensao + b; // Converte para pH
