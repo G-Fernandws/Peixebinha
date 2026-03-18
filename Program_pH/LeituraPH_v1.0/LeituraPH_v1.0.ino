@@ -14,7 +14,8 @@ float m;
 float b;
 int buf[10];
 
-void setup() {
+void setup() 
+{
   Serial.begin(9600);
 
   if (calibracao_ph7 == 0 && calibracao_ph4 == 0 && calibracao_ph10 == 0) {

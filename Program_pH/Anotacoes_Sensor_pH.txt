@@ -1,0 +1,82 @@
+CALIBRAÇÃO SENSOR DE PH
+Entender conceitos básicos: https://blog.eletrogate.com/monitorando-o-ph-de-liquidos-com-esp32-e-sensor-ph-4502c/
+
+Calibração do sensor:
+https://www.electroniclinic.com/ph-meter-arduino-ph-meter-calibration-diymore-ph-sensor-arduino-code
+
+https://raaflahar.medium.com/ph-4502c-sensor-diymore-how-to-use-and-calibrate-using-arduino-uno-r3-3afc2b96631
+
+ESQUEMÁTICO
+        (SAÍDA DO SENSOR)
+               PO
+                │
+                │
+             [ R1 10k ]
+                │
+                ●──────────→ GPIO34 (ESP32)
+                │
+             [ R2 20k ]
+                │
+                │
+               GND
+**GND SENSOR -> GND ESP32
+***VCC SENSOR -> VIN ESP32
+
+CALIBRAÇÃO E RESULTADOS
+1. Anotar valores de tensão de acordo com o pH
+
+pH (solução conhecida)		SONDA REFERENCIA		SONDA TESTE
+4							3.86					1.965
+7							6.68					1.635
+
+Leitura_pH_4 = 1,965
+Leitura_pH_7 = 1,635
+
+2. COEFICIENTES, utilizar as leituras relativas de tensão para calcular os coeficientes de calibração
+
+slope = (4-7)/(Leitura_pH_4-Leitura_pH_7)
+intercept = 7 - (slope*Leitura_pH_7)
+pH = (slope * voltage) + intercept
+
+FLUXO DA METODOLOGIA
+Leitura das tensões pela sonda teste 
+
+Leituras de pH pela sonda de referência
+
+Relacionar tensão com o valor de pH conhecido (4 e 7)
+
+Equação de coeficientes 
+
+aplicação dos coeficientes na programação 
+
+conversão tensão -> pH
+
+
+3. Resultados
+slope = -9.0909;
+intercept = 21.86;
+
+**cada leitura de pH abaixo é uma média de 30 leituras
+LEITURA PH 7.0
+RAW: 2032.77 | Tensao: 1.6381 V | pH: 6.97
+RAW: 2030.73 | Tensao: 1.6365 V | pH: 6.98
+RAW: 2031.13 | Tensao: 1.6368 V | pH: 6.98
+RAW: 2031.10 | Tensao: 1.6368 V | pH: 6.98
+RAW: 2033.07 | Tensao: 1.6384 V | pH: 6.97
+RAW: 2035.23 | Tensao: 1.6401 V | pH: 6.95
+RAW: 2032.33 | Tensao: 1.6378 V | pH: 6.97
+RAW: 2033.43 | Tensao: 1.6387 V | pH: 6.96
+RAW: 2032.30 | Tensao: 1.6378 V | pH: 6.97
+RAW: 2030.97 | Tensao: 1.6367 V | pH: 6.98
+
+LEITURA PH 4.0
+RAW: 2411.83 | Tensao: 1.9436 V | pH: 4.19
+RAW: 2416.03 | Tensao: 1.9470 V | pH: 4.16
+RAW: 2417.20 | Tensao: 1.9479 V | pH: 4.15
+RAW: 2416.30 | Tensao: 1.9472 V | pH: 4.16
+RAW: 2417.17 | Tensao: 1.9479 V | pH: 4.15
+RAW: 2415.10 | Tensao: 1.9462 V | pH: 4.17
+RAW: 2415.43 | Tensao: 1.9465 V | pH: 4.16
+RAW: 2416.80 | Tensao: 1.9476 V | pH: 4.15
+RAW: 2415.47 | Tensao: 1.9465 V | pH: 4.16
+RAW: 2416.33 | Tensao: 1.9472 V | pH: 4.16
