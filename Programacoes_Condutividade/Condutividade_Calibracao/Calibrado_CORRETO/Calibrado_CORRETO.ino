@@ -1,4 +1,4 @@
-const int pinoSensor = 34;
+const int pinoSensor = 32;
 const int numLeituras = 30;
 
 float fatorTDS = 0.5;   // fator de conversão EC → TDS
