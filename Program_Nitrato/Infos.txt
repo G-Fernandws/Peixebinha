@@ -1,0 +1,71 @@
+CALIBRAÇÃO SENSOR DE NITRATO
+PONTO	CONCENTRAÇÃO [mg/L]	VOLUME DA SOLUÇÃO ESTOQUE (100mg/L) [mL]	VOLUME ÁGUA DESTILADA [mL]	VOLUME FINAL
+1	0	0	100	100
+2	25	25	75	100
+3	50	50	50	100
+4	75	75	25	100
+5	100	100	0	100
+
+Diluição simples:
+
+C1*V1 = C2*V2
+
+Onde:
+C1 = 100 mg/L (estoque)
+C2 = concentração desejada
+V2 = 100 mL (volume final escolhido)
+
+FLUXO DA PROGRAMAÇÃO DE CALIBRAÇÃO
+
+[INÍCIO]
+   ↓
+Inicializar sistema
+(Serial, ADC, parâmetros)
+   ↓
+Exibir instruções ao usuário
+   ↓
+Definir concentrações padrão (> 0 mg/L)
+   ↓
+Para cada ponto de calibração:
+   ↓
+ ┌──────────────────────────────┐
+ │ Informar concentração atual                                           │
+ │ (ex: 25, 50, 75, 100 mg/L)                                                  │
+ └──────────────────────────────┘
+   ↓
+Aguardar usuário (ENTER)
+   ↓
+Sensor estabilizado?
+   ↓ (não)
+Aguardar estabilização
+   ↓ (sim)
+Realizar múltiplas leituras (n≈100)
+   ↓
+Calcular média do ADC
+   ↓
+Converter ADC → Tensão
+   ↓
+Calcular log10(concentração)
+   ↓
+Armazenar:
+[Tensão, log(C)]
+   ↓
+Repetir para todos os pontos
+   ↓
+Aplicar regressão linear
+(Tensão vs log(C))
+   ↓
+Obter coeficientes:
+a (inclinação) e b (intercepto)
+   ↓
+Calcular R² (opcional)
+   ↓
+Exibir resultados:
+- Dados experimentais
+- Equação: V = a·log(C) + b
+- R²
+   ↓
+Exibir equação inversa:
+C = 10^((V - b)/a)
+   ↓
+[FIM]
