@@ -1,12 +1,12 @@
-#define NITRATO_PIN 34
+#define NITRATO_PIN 33
 
 const int NUM_LEITURAS = 100;
 const float VREF = 3.3;
 const int ADC_RES = 4095;
 
 // Substituit pelos coeficientes obtidos na calibracao
-float a = -0.00000;
-float b = 0.000000;    
+float a = -0.120835;
+float b =  2.046716;  
 
 float lerMediaADC(int pin, int nLeituras) {
   long soma = 0;

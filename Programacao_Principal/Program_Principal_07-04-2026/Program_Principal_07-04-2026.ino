@@ -1,20 +1,27 @@
 // ============================================================
 //  Monitoramento de Qualidade da Água — ESP32
-//  Parâmetros: Temperatura, pH, Condutividade (EC25), TDS e Nitrato
-//  Recursos desta versão:
+//  Versão com menu interativo no Monitor Serial
+// ============================================================
+//  Parâmetros:
+//    - Temperatura (DS18B20)
+//    - pH
+//    - Condutividade compensada para 25 °C (EC25)
+//    - TDS
+//    - Nitrato (ISE)
+// ============================================================
+//  Recursos:
 //    - média robusta com descarte de extremos
 //    - desvio padrão
 //    - estabilização automática do nitrato
-//    - modo resumido e modo detalhado no Serial
-//    - saída opcional em CSV
-//    - checagem de plausibilidade
-//    - código modularizado e amplamente comentado
+//    - modo resumido / detalhado
+//    - saída CSV opcional
+//    - menu interativo no Serial
 // ============================================================
 //  Pinos:
-//    Temperatura   -> D4  (DS18B20, OneWire)
-//    pH            -> D34 (analógico)
-//    Condutividade -> D32 (analógico)
-//    Nitrato       -> D33 (analógico)
+//    Temperatura   -> D4
+//    pH            -> D34
+//    Condutividade -> D32
+//    Nitrato       -> D33
 // ============================================================
 
 #include <OneWire.h>
@@ -24,99 +31,72 @@
 // ============================================================
 // CONFIGURAÇÕES GERAIS
 // ============================================================
-
-// ---- Configuração do Serial ----
 const long SERIAL_BAUD = 115200;
 
-// ---- Modos de saída no monitor serial ----
-// true  = mostra detalhes completos
-// false = mostra apenas resumo
-bool MODO_DETALHADO = false;
-
-// true  = além do modo normal, imprime uma linha CSV por ciclo
+// ---- Estados do sistema ----
+bool MODO_DETALHADO = true;
 bool SAIDA_CSV = false;
+bool MEDICAO_CONTINUA = true;   // true = mede continuamente
+bool SISTEMA_PAUSADO = false;   // true = não mede até receber comando
 
-// ---- Tempo entre ciclos ----
+// ---- Temporização ----
 const unsigned long DELAY_ENTRE_CICLOS_MS = 2000;
 
-// ---- Número de amostras para sensores analógicos ----
-// Quanto maior, melhor a suavização, porém mais lento o ciclo.
+// ---- Amostragem analógica ----
 const int NUM_AMOSTRAS_ANALOGICAS = 100;
 
-// ---- Leitura da temperatura ----
-// Para DS18B20, não costuma ser necessário usar 100 leituras.
-// Isso reduz bastante o tempo de ciclo.
+// ---- Temperatura ----
 const int NUM_AMOSTRAS_TEMPERATURA = 15;
 
-// ---- Referência do ADC do ESP32 ----
+// ---- ADC ESP32 ----
 const float V_REF   = 3.3;
 const float ADC_RES = 4095.0;
 
-// ---- Média robusta ----
-// Percentual de amostras descartadas em cada extremidade.
-// Exemplo: 0.10 => descarta 10% menores e 10% maiores.
+// ---- Descarte de extremos na média robusta ----
 const float FRAC_DESCARTE = 0.10;
 
 // ============================================================
 // PINOS E OBJETOS
 // ============================================================
-
-// ---- Temperatura ----
 #define TEMP_PIN 4
 OneWire oneWire(TEMP_PIN);
 DallasTemperature sensorTemp(&oneWire);
 
-// ---- pH ----
 #define PH_PIN 34
+const float PH_SLOPE_25C     = -9.0909;
+const float PH_INTERCEPT_25C = 21.86;
+const float PH_TEMP_CAL      = 25.0;
 
-// Coeficientes obtidos na calibração do pH
-const float PH_SLOPE_25C     = -9.0909;  // pH/V a 25 °C
-const float PH_INTERCEPT_25C = 21.86;    // intercepto da calibração
-const float PH_TEMP_CAL      = 25.0;     // temperatura da calibração (°C)
-
-// ---- Condutividade / TDS ----
 #define EC_PIN 32
-const float FATOR_TDS = 0.5;   // fator empírico EC -> TDS
-const float TEMP_REF  = 25.0;  // referência para compensação de EC
-const float ALPHA_EC  = 0.02;  // 2%/°C
+const float FATOR_TDS = 0.5;
+const float TEMP_REF  = 25.0;
+const float ALPHA_EC  = 0.02;
 
-// ---- Nitrato (ISE) ----
 #define NITRATO_PIN 33
-
-// Coeficientes finais obtidos na calibração do nitrato
 const float NO3_A = -0.120835;
 const float NO3_B =  2.046916;
 
 // ============================================================
 // CONFIGURAÇÕES DE ESTABILIZAÇÃO DO NITRATO
 // ============================================================
-
-// Leitura em blocos para verificar estabilização do nitrato
 const int NO3_LEITURAS_POR_BLOCO = 20;
-const int NO3_MAX_BLOCOS         = 12;
-
-// Critério de estabilização em tensão
-const float NO3_LIMIAR_ESTAB_V = 0.0015;  // V
+const int NO3_MAX_BLOCOS = 12;
+const float NO3_LIMIAR_ESTAB_V = 0.0015;
 const int NO3_BLOCOS_ESTAVEIS_NECESSARIOS = 3;
-
-// Intervalo entre blocos
 const int NO3_DELAY_ENTRE_BLOCOS_MS = 250;
 
 // ============================================================
-// ESTRUTURAS DE DADOS
+// ESTRUTURAS
 // ============================================================
-
-// Estatística básica de um conjunto de leituras analógicas
 struct EstatisticaAnalogica {
   float mediaADC;
   float desvioADC;
   float mediaTensao;
   float desvioTensao;
-  int   nUsado;
-  bool  valido;
+  int nUsado;
+  bool valido;
 };
 
-// Resultado final do pH
 struct ResultadoPH {
   EstatisticaAnalogica estat;
   float slopeComp;
@@ -125,7 +105,6 @@ struct ResultadoPH {
   bool valido;
 };
 
-// Resultado final da EC/TDS
 struct ResultadoEC {
   EstatisticaAnalogica estat;
   float ecBruta;
@@ -134,7 +113,6 @@ struct ResultadoEC {
   bool valido;
 };
 
-// Resultado final do nitrato
 struct ResultadoNO3 {
   EstatisticaAnalogica estat;
   float nitrato;
@@ -145,15 +123,13 @@ struct ResultadoNO3 {
 // ============================================================
 // CONTROLE GLOBAL
 // ============================================================
-
 unsigned long tempoInicio = 0;
 unsigned long contadorCiclos = 0;
 
 // ============================================================
-// FUNÇÕES AUXILIARES DE ARRAY / ESTATÍSTICA
+// FUNÇÕES DE APOIO
 // ============================================================
 
-// Ordenação simples para o vetor de leituras
 void ordenarVetor(float *v, int n) {
   for (int i = 0; i < n - 1; i++) {
     for (int j = i + 1; j < n; j++) {
@@ -166,7 +142,6 @@ void ordenarVetor(float *v, int n) {
   }
 }
 
-// Calcula média simples
 float calcularMedia(const float *v, int n) {
   if (n <= 0) return 0.0;
   float soma = 0.0;
@@ -174,30 +149,18 @@ float calcularMedia(const float *v, int n) {
   return soma / n;
 }
 
-// Calcula desvio padrão amostral
 float calcularDesvioPadrao(const float *v, int n, float media) {
   if (n < 2) return 0.0;
-
   float soma = 0.0;
   for (int i = 0; i < n; i++) {
     float d = v[i] - media;
     soma += d * d;
   }
-
   return sqrt(soma / (n - 1));
 }
 
 // ============================================================
 // LEITURA ROBUSTA ANALÓGICA
-// ============================================================
-//
-// Estratégia:
-// 1. lê várias amostras
-// 2. ordena os valores
-// 3. descarta extremos (menores e maiores)
-// 4. calcula média e desvio padrão do miolo
-//
-// Isso reduz o efeito de picos espúrios.
 // ============================================================
 EstatisticaAnalogica lerAnalogicoRobusto(int pino, int nAmostras, int delayMs) {
   EstatisticaAnalogica r;
@@ -208,7 +171,7 @@ EstatisticaAnalogica lerAnalogicoRobusto(int pino, int nAmostras, int delayMs) {
   r.nUsado = 0;
   r.valido = false;
 
-  if (nAmostras < 5) return r;
+  if (nAmostras < 5 || nAmostras > NUM_AMOSTRAS_ANALOGICAS) return r;
 
   float leituras[NUM_AMOSTRAS_ANALOGICAS];
 
@@ -237,7 +200,6 @@ EstatisticaAnalogica lerAnalogicoRobusto(int pino, int nAmostras, int delayMs) {
   float mediaADC = calcularMedia(mioloADC, nUsado);
   float desvioADC = calcularDesvioPadrao(mioloADC, nUsado, mediaADC);
 
-  // Converte o miolo para tensão
   float mioloV[NUM_AMOSTRAS_ANALOGICAS];
   for (int i = 0; i < nUsado; i++) {
     mioloV[i] = (mioloADC[i] / ADC_RES) * V_REF;
@@ -257,11 +219,7 @@ EstatisticaAnalogica lerAnalogicoRobusto(int pino, int nAmostras, int delayMs) {
 }
 
 // ============================================================
-// LEITURA DE TEMPERATURA
-// ============================================================
-//
-// Faz média simples das leituras válidas do DS18B20.
-// Se nenhuma leitura for válida, retorna DEVICE_DISCONNECTED_C.
+// TEMPERATURA
 // ============================================================
 float lerMediaTemperatura() {
   float somaTemp = 0.0;
@@ -279,19 +237,12 @@ float lerMediaTemperatura() {
     delay(50);
   }
 
-  if (leiturasValidas == 0) {
-    return DEVICE_DISCONNECTED_C;
-  }
-
+  if (leiturasValidas == 0) return DEVICE_DISCONNECTED_C;
   return somaTemp / leiturasValidas;
 }
 
 // ============================================================
-// LEITURA DO pH COM COMPENSAÇÃO DE TEMPERATURA
-// ============================================================
-//
-// Aqui a compensação atua sobre a inclinação da reta,
-// assumindo calibração feita a 25 °C.
+// pH
 // ============================================================
 ResultadoPH lerPHCompensado(float temperaturaMedia) {
   ResultadoPH r;
@@ -304,38 +255,26 @@ ResultadoPH lerPHCompensado(float temperaturaMedia) {
   if (!r.estat.valido) return r;
 
   float tempUsada = temperaturaMedia;
-  if (tempUsada == DEVICE_DISCONNECTED_C) {
-    tempUsada = PH_TEMP_CAL;
-  }
+  if (tempUsada == DEVICE_DISCONNECTED_C) tempUsada = PH_TEMP_CAL;
 
   float Tk_med = tempUsada + 273.15;
   float Tk_cal = PH_TEMP_CAL + 273.15;
 
-  // Ajuste da inclinação pela temperatura absoluta
   r.slopeComp = PH_SLOPE_25C * (Tk_cal / Tk_med);
 
-  // Mantém pH 7 como ponto isopotencial aproximado
   float vIso = (7.0 - PH_INTERCEPT_25C) / PH_SLOPE_25C;
   r.interceptComp = 7.0 - (r.slopeComp * vIso);
 
   r.pH = (r.slopeComp * r.estat.mediaTensao) + r.interceptComp;
 
-  // Faixa plausível
-  if (isnan(r.pH) || isinf(r.pH) || r.pH < 0.0 || r.pH > 14.5) {
-    r.valido = false;
-    return r;
-  }
+  if (isnan(r.pH) || isinf(r.pH) || r.pH < 0.0 || r.pH > 14.5) return r;
 
   r.valido = true;
   return r;
 }
 
 // ============================================================
-// LEITURA DA CONDUTIVIDADE / TDS
-// ============================================================
-//
-// A EC bruta é convertida para EC25 usando compensação de
-// temperatura. Depois o TDS é estimado a partir de EC25.
+// CONDUTIVIDADE / TDS
 // ============================================================
 ResultadoEC lerEC(float temperaturaMedia) {
   ResultadoEC r;
@@ -347,13 +286,10 @@ ResultadoEC lerEC(float temperaturaMedia) {
   r.estat = lerAnalogicoRobusto(EC_PIN, NUM_AMOSTRAS_ANALOGICAS, 10);
   if (!r.estat.valido) return r;
 
-  // Equação de calibração da condutividade
   r.ecBruta = (r.estat.mediaTensao + 0.0572) / 0.0013;
 
   float tempUsada = temperaturaMedia;
-  if (tempUsada == DEVICE_DISCONNECTED_C) {
-    tempUsada = TEMP_REF;
-  }
+  if (tempUsada == DEVICE_DISCONNECTED_C) tempUsada = TEMP_REF;
 
   float fatorComp = 1.0 + ALPHA_EC * (tempUsada - TEMP_REF);
   if (fatorComp <= 0.0) fatorComp = 0.001;
@@ -361,28 +297,14 @@ ResultadoEC lerEC(float temperaturaMedia) {
   r.ec25 = r.ecBruta / fatorComp;
   r.tds  = r.ec25 * FATOR_TDS;
 
-  // Faixas plausíveis
-  if (isnan(r.ec25) || isinf(r.ec25) || r.ec25 < 0.0) {
-    r.valido = false;
-    return r;
-  }
+  if (isnan(r.ec25) || isinf(r.ec25) || r.ec25 < 0.0) return r;
 
   r.valido = true;
   return r;
 }
 
 // ============================================================
-// LEITURA DO NITRATO COM ESTABILIZAÇÃO AUTOMÁTICA
-// ============================================================
-//
-// Estratégia:
-// 1. lê o nitrato em blocos robustos
-// 2. acompanha a tensão média por bloco
-// 3. considera estabilizado quando a variação |dV| entre blocos
-//    fica abaixo do limiar por alguns blocos seguidos
-// 4. usa a média dos blocos estáveis
-//
-// Isso é útil porque o ISE pode demorar um pouco para estabilizar.
+// NITRATO COM ESTABILIZAÇÃO
 // ============================================================
 ResultadoNO3 lerNitratoEstabilizado() {
   ResultadoNO3 r;
@@ -458,9 +380,7 @@ ResultadoNO3 lerNitratoEstabilizado() {
       }
     }
 
-    if (MODO_DETALHADO) {
-      Serial.println();
-    }
+    if (MODO_DETALHADO) Serial.println();
 
     tensaoAnterior = estatBloco.mediaTensao;
     delay(NO3_DELAY_ENTRE_BLOCOS_MS);
@@ -477,82 +397,144 @@ ResultadoNO3 lerNitratoEstabilizado() {
       r.estat.desvioTensao = desvioV;
       r.estat.nUsado = nEstaveis;
       r.estat.valido = true;
-
       r.estabilizou = true;
       break;
     }
   }
 
-  // Se não estabilizar, usa o último bloco válido medido
   if (!r.estabilizou) {
     r.estat = ultimoBloco;
   }
 
-  if (!r.estat.valido) {
-    return r;
-  }
+  if (!r.estat.valido) return r;
 
   r.nitrato = pow(10.0, (r.estat.mediaTensao - NO3_B) / NO3_A);
 
-  if (isnan(r.nitrato) || isinf(r.nitrato) || r.nitrato < 0.0) {
-    r.valido = false;
-    return r;
-  }
+  if (isnan(r.nitrato) || isinf(r.nitrato) || r.nitrato < 0.0) return r;
 
   r.valido = true;
   return r;
 }
 
 // ============================================================
-// IMPRESSÃO: CABEÇALHO
+// MENU INTERATIVO
 // ============================================================
-void imprimirCabecalho() {
-  Serial.println("====================================================");
-  Serial.println("       Monitoramento de Qualidade da Agua");
-  Serial.println("====================================================");
-  Serial.println("Parametros: Temperatura, pH, EC25, TDS e Nitrato");
-  Serial.println("Recursos: media robusta, desvio padrao,");
-  Serial.println("          estabilizacao automatica do nitrato");
-  Serial.println("====================================================");
 
-  Serial.print("Modo detalhado: ");
-  Serial.println(MODO_DETALHADO ? "SIM" : "NAO");
-
-  Serial.print("Saida CSV: ");
-  Serial.println(SAIDA_CSV ? "SIM" : "NAO");
-
+void imprimirMenu() {
+  Serial.println("====================================================");
+  Serial.println("MENU SERIAL");
+  Serial.println("====================================================");
+  Serial.println("[d] Alternar modo detalhado/resumido");
+  Serial.println("[c] Ligar/desligar saida CSV");
+  Serial.println("[p] Pausar/retomar medicoes");
+  Serial.println("[1] Fazer uma unica leitura");
+  Serial.println("[m] Mostrar configuracao atual");
+  Serial.println("[h] Mostrar menu novamente");
   Serial.println("====================================================");
   Serial.println();
 }
 
-// ============================================================
-// IMPRESSÃO: RESUMO DETALHADO
-// ============================================================
-void imprimirResultadosDetalhados(
-  float temperatura,
-  ResultadoPH ph,
-  ResultadoEC ec,
-  ResultadoNO3 no3
-) {
-  Serial.println("----------------------------------------------------");
+void imprimirConfiguracaoAtual() {
+  Serial.println("Configuracao atual:");
+  Serial.print("- Modo detalhado   : ");
+  Serial.println(MODO_DETALHADO ? "SIM" : "NAO");
+  Serial.print("- Saida CSV        : ");
+  Serial.println(SAIDA_CSV ? "SIM" : "NAO");
+  Serial.print("- Medicao continua : ");
+  Serial.println(MEDICAO_CONTINUA ? "SIM" : "NAO");
+  Serial.print("- Sistema pausado  : ");
+  Serial.println(SISTEMA_PAUSADO ? "SIM" : "NAO");
+  Serial.println();
+}
 
+void processarComandoSerial() {
+  while (Serial.available()) {
+    char cmd = Serial.read();
+
+    if (cmd == '\n' || cmd == '\r') continue;
+
+    switch (cmd) {
+      case 'd':
+      case 'D':
+        MODO_DETALHADO = !MODO_DETALHADO;
+        Serial.print("Modo detalhado agora: ");
+        Serial.println(MODO_DETALHADO ? "SIM" : "NAO");
+        break;
+
+      case 'c':
+      case 'C':
+        SAIDA_CSV = !SAIDA_CSV;
+        Serial.print("Saida CSV agora: ");
+        Serial.println(SAIDA_CSV ? "SIM" : "NAO");
+        if (SAIDA_CSV) {
+          Serial.println("CSV_HEADER:");
+          Serial.println("ciclo,tempo_s,temperatura_C,pH,EC25_uScm,TDS_mgL,NO3_mgL");
+        }
+        break;
+
+      case 'p':
+      case 'P':
+        SISTEMA_PAUSADO = !SISTEMA_PAUSADO;
+        Serial.print("Sistema pausado: ");
+        Serial.println(SISTEMA_PAUSADO ? "SIM" : "NAO");
+        break;
+
+      case '1':
+        MEDICAO_CONTINUA = false;
+        SISTEMA_PAUSADO = false;
+        Serial.println("O sistema fara uma unica leitura no proximo ciclo.");
+        break;
+
+      case 'm':
+      case 'M':
+        imprimirConfiguracaoAtual();
+        break;
+
+      case 'h':
+      case 'H':
+        imprimirMenu();
+        break;
+
+      default:
+        Serial.print("Comando nao reconhecido: ");
+        Serial.println(cmd);
+        Serial.println("Digite 'h' para ver o menu.");
+        break;
+    }
+
+    Serial.println();
+  }
+}
+
+// ============================================================
+// IMPRESSÃO
+// ============================================================
+
+void imprimirCabecalho() {
+  Serial.println("====================================================");
+  Serial.println("       Monitoramento de Qualidade da Agua");
+  Serial.println("====================================================");
+  Serial.println("Versao com menu interativo no Monitor Serial");
+  Serial.println("Parametros: Temperatura, pH, EC25, TDS e Nitrato");
+  Serial.println("====================================================");
+  Serial.println();
+}
+
+void imprimirResultadosDetalhados(float temperatura, ResultadoPH ph, ResultadoEC ec, ResultadoNO3 no3) {
+  Serial.println("----------------------------------------------------");
   Serial.print("Ciclo                           : ");
   Serial.println(contadorCiclos);
-
   Serial.print("Tempo desde inicio              : ");
   Serial.print((millis() - tempoInicio) / 1000.0, 1);
   Serial.println(" s");
-
   Serial.println();
 
   Serial.print("Temperatura media               : ");
-  if (temperatura == DEVICE_DISCONNECTED_C) {
-    Serial.println("ERRO");
-  } else {
+  if (temperatura == DEVICE_DISCONNECTED_C) Serial.println("ERRO");
+  else {
     Serial.print(temperatura, 2);
     Serial.println(" C");
   }
-
   Serial.println();
 
   Serial.print("pH - ADC medio                  : ");
@@ -567,12 +549,9 @@ void imprimirResultadosDetalhados(
   Serial.println(" V");
   Serial.print("pH - Slope compensado           : ");
   Serial.println(ph.slopeComp, 6);
-  Serial.print("pH - Intercepto compensado      : ");
-  Serial.println(ph.interceptComp, 6);
   Serial.print("pH medio                        : ");
   if (ph.valido) Serial.println(ph.pH, 2);
   else Serial.println("ERRO");
-
   Serial.println();
 
   Serial.print("EC - ADC medio                  : ");
@@ -585,28 +564,16 @@ void imprimirResultadosDetalhados(
   Serial.print("EC - Tensao desvio              : ");
   Serial.print(ec.estat.desvioTensao, 6);
   Serial.println(" V");
-  Serial.print("Condutividade bruta             : ");
-  if (ec.valido) {
-    Serial.print(ec.ecBruta, 2);
-    Serial.println(" uS/cm");
-  } else {
-    Serial.println("ERRO");
-  }
   Serial.print("Condutividade compensada (EC25) : ");
   if (ec.valido) {
     Serial.print(ec.ec25, 2);
     Serial.println(" uS/cm");
-  } else {
-    Serial.println("ERRO");
-  }
+  } else Serial.println("ERRO");
   Serial.print("TDS medio                       : ");
   if (ec.valido) {
     Serial.print(ec.tds, 2);
     Serial.println(" mg/L");
-  } else {
-    Serial.println("ERRO");
-  }
-
+  } else Serial.println("ERRO");
   Serial.println();
 
   Serial.print("NO3 - ADC medio                 : ");
@@ -625,23 +592,13 @@ void imprimirResultadosDetalhados(
   if (no3.valido) {
     Serial.print(no3.nitrato, 2);
     Serial.println(" mg/L");
-  } else {
-    Serial.println("ERRO");
-  }
+  } else Serial.println("ERRO");
 
   Serial.println("----------------------------------------------------");
   Serial.println();
 }
 
-// ============================================================
-// IMPRESSÃO: RESUMO CURTO
-// ============================================================
-void imprimirResultadosResumidos(
-  float temperatura,
-  ResultadoPH ph,
-  ResultadoEC ec,
-  ResultadoNO3 no3
-) {
+void imprimirResultadosResumidos(float temperatura, ResultadoPH ph, ResultadoEC ec, ResultadoNO3 no3) {
   Serial.println("----------------------------------------------------");
   Serial.print("Ciclo ");
   Serial.print(contadorCiclos);
@@ -682,16 +639,9 @@ void imprimirResultadosResumidos(
   Serial.println();
 }
 
-// ============================================================
-// IMPRESSÃO: CSV
-// ============================================================
-//
-// Facilita exportar os dados para Excel, LibreOffice ou Python.
-// ============================================================
 void imprimirCSV(float temperatura, ResultadoPH ph, ResultadoEC ec, ResultadoNO3 no3) {
   Serial.print(contadorCiclos);
   Serial.print(",");
-
   Serial.print((millis() - tempoInicio) / 1000.0, 1);
   Serial.print(",");
 
@@ -716,9 +666,6 @@ void imprimirCSV(float temperatura, ResultadoPH ph, ResultadoEC ec, ResultadoNO3
   Serial.println();
 }
 
-// ============================================================
-// IMPRESSÃO: ALERTAS
-// ============================================================
 void imprimirAlertas(float temperatura, ResultadoPH ph, ResultadoEC ec, ResultadoNO3 no3) {
   bool houveAlerta = false;
 
@@ -728,7 +675,7 @@ void imprimirAlertas(float temperatura, ResultadoPH ph, ResultadoEC ec, Resultad
   }
 
   if (ph.valido && (ph.pH < 5.0 || ph.pH > 9.0)) {
-    Serial.println("[ALERTA] pH fora da faixa usual de neutralidade.");
+    Serial.println("[ALERTA] pH fora da faixa usual.");
     houveAlerta = true;
   }
 
@@ -743,7 +690,7 @@ void imprimirAlertas(float temperatura, ResultadoPH ph, ResultadoEC ec, Resultad
   }
 
   if (no3.valido && !no3.estabilizou) {
-    Serial.println("[ALERTA] Nitrato reportado sem estabilizacao confirmada.");
+    Serial.println("[ALERTA] Nitrato sem estabilizacao confirmada.");
     houveAlerta = true;
   }
 
@@ -751,7 +698,45 @@ void imprimirAlertas(float temperatura, ResultadoPH ph, ResultadoEC ec, Resultad
     Serial.println("Sem alertas de plausibilidade neste ciclo.");
   }
 
+  if (MODO_DETALHADO) Serial.println();
+}
+
+// ============================================================
+// EXECUÇÃO DE UM CICLO DE LEITURA
+// ============================================================
+void executarCicloLeitura() {
+  contadorCiclos++;
+
   if (MODO_DETALHADO) {
+    Serial.println(">>> Iniciando novo ciclo de leitura...");
+  }
+
+  float temperatura = lerMediaTemperatura();
+  if (MODO_DETALHADO) Serial.println("Temperatura concluida.");
+
+  ResultadoPH ph = lerPHCompensado(temperatura);
+  if (MODO_DETALHADO) Serial.println("pH concluido.");
+
+  ResultadoEC ec = lerEC(temperatura);
+  if (MODO_DETALHADO) Serial.println("Condutividade e TDS concluidos.");
+
+  ResultadoNO3 no3 = lerNitratoEstabilizado();
+  if (MODO_DETALHADO) Serial.println("Nitrato concluido.");
+
+  if (MODO_DETALHADO) {
+    imprimirResultadosDetalhados(temperatura, ph, ec, no3);
+  } else {
+    imprimirResultadosResumidos(temperatura, ph, ec, no3);
+  }
+
+  imprimirAlertas(temperatura, ph, ec, no3);
+
+  if (SAIDA_CSV) {
+    imprimirCSV(temperatura, ph, ec, no3);
+  }
+
+  if (MODO_DETALHADO) {
+    Serial.println(">>> Ciclo finalizado.");
     Serial.println();
   }
 }
@@ -776,59 +761,42 @@ void setup() {
 
   if (nDisp == 0) {
     Serial.println("[AVISO] Nenhum sensor DS18B20 detectado.");
-    Serial.println("[AVISO] O pH e a EC usarao temperatura de referencia.");
+    Serial.println("[AVISO] pH e EC usarao temperatura de referencia.");
   }
 
-  if (SAIDA_CSV) {
-    Serial.println();
-    Serial.println("CSV_HEADER:");
-    Serial.println("ciclo,tempo_s,temperatura_C,pH,EC25_uScm,TDS_mgL,NO3_mgL");
-    Serial.println();
-  }
+  Serial.println();
+  imprimirConfiguracaoAtual();
+  imprimirMenu();
 }
 
 // ============================================================
-// LOOP PRINCIPAL
+// LOOP
 // ============================================================
 void loop() {
-  contadorCiclos++;
+  processarComandoSerial();
 
-  if (MODO_DETALHADO) {
-    Serial.println(">>> Iniciando novo ciclo de leitura...");
+  if (SISTEMA_PAUSADO) {
+    delay(200);
+    return;
   }
 
-  float temperatura = lerMediaTemperatura();
+  executarCicloLeitura();
 
-  if (MODO_DETALHADO) Serial.println("Temperatura concluida.");
-
-  ResultadoPH ph = lerPHCompensado(temperatura);
-
-  if (MODO_DETALHADO) Serial.println("pH concluido.");
-
-  ResultadoEC ec = lerEC(temperatura);
-
-  if (MODO_DETALHADO) Serial.println("Condutividade e TDS concluidos.");
-
-  ResultadoNO3 no3 = lerNitratoEstabilizado();
-
-  if (MODO_DETALHADO) Serial.println("Nitrato concluido.");
-
-  if (MODO_DETALHADO) {
-    imprimirResultadosDetalhados(temperatura, ph, ec, no3);
-  } else {
-    imprimirResultadosResumidos(temperatura, ph, ec, no3);
-  }
-
-  imprimirAlertas(temperatura, ph, ec, no3);
-
-  if (SAIDA_CSV) {
-    imprimirCSV(temperatura, ph, ec, no3);
-  }
-
-  if (MODO_DETALHADO) {
-    Serial.println(">>> Ciclo finalizado.");
+  // Se foi solicitado apenas um ciclo, pausa após executá-lo
+  if (!MEDICAO_CONTINUA) {
+    SISTEMA_PAUSADO = true;
+    MEDICAO_CONTINUA = true;
+    Serial.println("Leitura unica concluida. Sistema pausado.");
+    Serial.println("Use [p] para retomar medicoes continuas.");
     Serial.println();
   }
 
-  delay(DELAY_ENTRE_CICLOS_MS);
+  unsigned long t0 = millis();
+  while (millis() - t0 < DELAY_ENTRE_CICLOS_MS) {
+    processarComandoSerial();
+
+    if (SISTEMA_PAUSADO) break;
+
+    delay(50);
+  }
 }
