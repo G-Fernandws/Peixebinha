@@ -2,6 +2,22 @@
 //  Monitoramento de Qualidade da Água — ESP32
 //  Versão com menu interativo no Monitor Serial
 // ============================================================
+//  Objetivo geral:
+//  Este programa realiza a leitura sequencial de cinco parâmetros
+//  relevantes para monitoramento de qualidade da água:
+//    1) Temperatura
+//    2) pH
+//    3) Condutividade elétrica compensada para 25 °C (EC25)
+//    4) TDS
+//    5) Nitrato por eletrodo íon-seletivo (ISE)
+//
+//  Filosofia de funcionamento:
+//  - primeiro o sistema lê a temperatura, pois ela influencia pH e EC;
+//  - depois lê os sensores analógicos com múltiplas amostras;
+//  - aplica média robusta com descarte de extremos para reduzir ruído;
+//  - calcula os parâmetros finais com base nos coeficientes calibrados;
+//  - exibe os resultados em modo resumido ou detalhado.
+// ============================================================
 //  Parâmetros:
 //    - Temperatura (DS18B20)
 //    - pH
@@ -29,39 +45,74 @@
 #include <math.h>
 
 // ============================================================
-// CONFIGURAÇÕES GERAIS
+//                    CONFIGURAÇÕES GERAIS
 // ============================================================
 const long SERIAL_BAUD = 115200;
 
 // ---- Estados do sistema ----
-bool MODO_DETALHADO = true;
+// MODO_DETALHADO: quando true, imprime variáveis intermediárias,
+// desvios, tensões e status de estabilização.
+// SAIDA_CSV: quando true, imprime uma linha em formato CSV, útil
+// para copiar e colar em planilha ou salvar no PC.
+// MEDICAO_CONTINUA: controla se o sistema seguirá medindo após o
+// ciclo atual. É alterado quando pede leitura única.
+// SISTEMA_PAUSADO: interrompe novos ciclos até receber comando.
+bool MODO_DETALHADO = false;
 bool SAIDA_CSV = false;
 bool MEDICAO_CONTINUA = true;   // true = mede continuamente
 bool SISTEMA_PAUSADO = false;   // true = não mede até receber comando
 
 // ---- Temporização ----
+// Intervalo entre um ciclo completo e o próximo.
+// Não representa o tempo total do ciclo, pois cada sensor já consome
+// tempo próprio de leitura e estabilização.
 const unsigned long DELAY_ENTRE_CICLOS_MS = 2000;
 
 // ---- Amostragem analógica ----
+// Número máximo de amostras usadas nas leituras dos sensores
+// analógicos. O valor real utilizado por função não pode exceder
+// este limite, pois os vetores foram dimensionados com base nele.
 const int NUM_AMOSTRAS_ANALOGICAS = 100;
 
 // ---- Temperatura ----
-const int NUM_AMOSTRAS_TEMPERATURA = 15;
+// Número de leituras do DS18B20 para cálculo da média final.
+// Aqui foi adotada média simples das leituras válidas.
+const int NUM_AMOSTRAS_TEMPERATURA = 100;
 
 // ---- ADC ESP32 ----
+// V_REF  : tensão de referência assumida para conversão ADC -> volts.
+// ADC_RES: resolução máxima do ADC em 12 bits no ESP32 (0 a 4095).
 const float V_REF   = 3.3;
 const float ADC_RES = 4095.0;
 
 // ---- Descarte de extremos na média robusta ----
+// Fração das leituras descartada em cada ponta do vetor ordenado.
+// Exemplo: 10% descarta os menores 10% e os maiores 10%, reduzindo
+// a influência de ruídos impulsivos e leituras espúrias.
 const float FRAC_DESCARTE = 0.10;
 
 // ============================================================
-// PINOS E OBJETOS
+//                      PINOS E OBJETOS
 // ============================================================
 #define TEMP_PIN 4
 OneWire oneWire(TEMP_PIN);
 DallasTemperature sensorTemp(&oneWire);
 
+// Coeficientes de calibração
+// pH:
+// A equação final está na forma:
+//    pH = slope * tensão + intercept
+// Os coeficientes a 25 °C são ajustados pela temperatura medida,
+// assumindo comportamento linear do slope com a temperatura absoluta.
+//
+// EC:
+// A condutividade bruta é calculada a partir da equação calibrada do
+// sensor. Em seguida, faz-se compensação para 25 °C usando ALPHA_EC.
+// TDS é estimado por fator empírico aplicado sobre EC25.
+//
+// Nitrato:
+// A concentração é obtida por relação exponencial inversa da curva
+// ajustada em log10, compatível com comportamento típico do tipo de sensor, ISE.
 #define PH_PIN 34
 const float PH_SLOPE_25C     = -9.0909;
 const float PH_INTERCEPT_25C = 21.86;
@@ -77,7 +128,7 @@ const float NO3_A = -0.120835;
 const float NO3_B =  2.046916;
 
 // ============================================================
-// CONFIGURAÇÕES DE ESTABILIZAÇÃO DO NITRATO
+//          CONFIGURAÇÕES DE ESTABILIZAÇÃO DO NITRATO
 // ============================================================
 const int NO3_LEITURAS_POR_BLOCO = 20;
 const int NO3_MAX_BLOCOS = 12;
@@ -86,7 +137,7 @@ const int NO3_BLOCOS_ESTAVEIS_NECESSARIOS = 3;
 const int NO3_DELAY_ENTRE_BLOCOS_MS = 250;
 
 // ============================================================
-// ESTRUTURAS
+//                         ESTRUTURAS
 // ============================================================
 struct EstatisticaAnalogica {
   float mediaADC;
@@ -121,15 +172,19 @@ struct ResultadoNO3 {
 };
 
 // ============================================================
-// CONTROLE GLOBAL
+//                        CONTROLE GLOBAL
 // ============================================================
 unsigned long tempoInicio = 0;
 unsigned long contadorCiclos = 0;
 
 // ============================================================
-// FUNÇÕES DE APOIO
+//                        FUNÇÕES DE APOIO
 // ============================================================
 
+// Ordena o vetor em ordem crescente.
+// Esta função é usada antes do descarte de extremos, para que o
+// programa consiga remover sistematicamente os menores e maiores
+// valores da série de leituras.
 void ordenarVetor(float *v, int n) {
   for (int i = 0; i < n - 1; i++) {
     for (int j = i + 1; j < n; j++) {
@@ -142,6 +197,7 @@ void ordenarVetor(float *v, int n) {
   }
 }
 
+// Calcula a média aritmética simples de um vetor.
 float calcularMedia(const float *v, int n) {
   if (n <= 0) return 0.0;
   float soma = 0.0;
@@ -149,6 +205,8 @@ float calcularMedia(const float *v, int n) {
   return soma / n;
 }
 
+// Calcula o desvio-padrão amostral (n - 1 no denominador).
+// Esse indicador ajuda a avaliar a estabilidade das leituras.
 float calcularDesvioPadrao(const float *v, int n, float media) {
   if (n < 2) return 0.0;
   float soma = 0.0;
@@ -160,8 +218,15 @@ float calcularDesvioPadrao(const float *v, int n, float media) {
 }
 
 // ============================================================
-// LEITURA ROBUSTA ANALÓGICA
+//                   LEITURA ROBUSTA ANALÓGICA
 // ============================================================
+// Realiza uma leitura analógica robusta:
+// 1) coleta várias amostras do pino;
+// 2) ordena os valores;
+// 3) descarta extremos inferiores e superiores;
+// 4) calcula média e desvio no miolo da distribuição;
+// 5) converte ADC médio em tensão média.
+// Essa estratégia reduz efeito de ruído, picos e oscilações rápidas.
 EstatisticaAnalogica lerAnalogicoRobusto(int pino, int nAmostras, int delayMs) {
   EstatisticaAnalogica r;
   r.mediaADC = 0;
@@ -182,6 +247,7 @@ EstatisticaAnalogica lerAnalogicoRobusto(int pino, int nAmostras, int delayMs) {
 
   ordenarVetor(leituras, nAmostras);
 
+  // Calcula quantas leituras serão descartadas em cada extremidade.
   int nDesc = (int)(nAmostras * FRAC_DESCARTE);
   if (nDesc < 1) nDesc = 1;
 
@@ -221,6 +287,9 @@ EstatisticaAnalogica lerAnalogicoRobusto(int pino, int nAmostras, int delayMs) {
 // ============================================================
 // TEMPERATURA
 // ============================================================
+// Lê repetidamente o DS18B20 e retorna a média apenas das leituras
+// consideradas fisicamente válidas. Se nenhuma leitura for válida,
+// retorna DEVICE_DISCONNECTED_C como indicador de falha.
 float lerMediaTemperatura() {
   float somaTemp = 0.0;
   int leiturasValidas = 0;
@@ -244,6 +313,13 @@ float lerMediaTemperatura() {
 // ============================================================
 // pH
 // ============================================================
+// Faz a leitura do sensor de pH e aplica compensação térmica no slope.
+// Etapas:
+// 1) lê a tensão média robusta;
+// 2) usa a temperatura medida para ajustar a sensibilidade;
+// 3) recalcula o intercepto mantendo o ponto isoelétrico da calibração;
+// 4) converte tensão em pH;
+// 5) valida o resultado em faixa plausível.
 ResultadoPH lerPHCompensado(float temperaturaMedia) {
   ResultadoPH r;
   r.slopeComp = 0;
@@ -262,6 +338,8 @@ ResultadoPH lerPHCompensado(float temperaturaMedia) {
 
   r.slopeComp = PH_SLOPE_25C * (Tk_cal / Tk_med);
 
+  // Determina a tensão correspondente ao ponto de pH 7 da calibração.
+  // Isso permite ajustar o intercepto sem perder o ponto de referência.
   float vIso = (7.0 - PH_INTERCEPT_25C) / PH_SLOPE_25C;
   r.interceptComp = 7.0 - (r.slopeComp * vIso);
 
@@ -276,6 +354,13 @@ ResultadoPH lerPHCompensado(float temperaturaMedia) {
 // ============================================================
 // CONDUTIVIDADE / TDS
 // ============================================================
+// Faz a leitura da condutividade e do TDS.
+// Etapas:
+// 1) lê a tensão média robusta do sensor;
+// 2) converte a tensão em condutividade bruta pela equação calibrada;
+// 3) compensa o valor para 25 °C;
+// 4) estima TDS por fator de conversão;
+// 5) rejeita resultados não plausíveis.
 ResultadoEC lerEC(float temperaturaMedia) {
   ResultadoEC r;
   r.ecBruta = 0;
@@ -286,11 +371,13 @@ ResultadoEC lerEC(float temperaturaMedia) {
   r.estat = lerAnalogicoRobusto(EC_PIN, NUM_AMOSTRAS_ANALOGICAS, 10);
   if (!r.estat.valido) return r;
 
+  // Equação calibrada do sensor para converter tensão em EC bruta.
   r.ecBruta = (r.estat.mediaTensao + 0.0572) / 0.0013;
 
   float tempUsada = temperaturaMedia;
   if (tempUsada == DEVICE_DISCONNECTED_C) tempUsada = TEMP_REF;
 
+  // Fator de compensação térmica para referenciar a 25 °C.
   float fatorComp = 1.0 + ALPHA_EC * (tempUsada - TEMP_REF);
   if (fatorComp <= 0.0) fatorComp = 0.001;
 
@@ -306,6 +393,18 @@ ResultadoEC lerEC(float temperaturaMedia) {
 // ============================================================
 // NITRATO COM ESTABILIZAÇÃO
 // ============================================================
+// Faz a leitura do nitrato com verificação de estabilização.
+// Em sensores ISE, a leitura costuma demorar mais para estabilizar.
+// Por isso, o algoritmo trabalha em blocos:
+// 1) mede um bloco de leituras;
+// 2) compara a tensão média do bloco atual com a do bloco anterior;
+// 3) se a diferença ficar abaixo do limiar, considera o bloco estável;
+// 4) exige uma sequência mínima de blocos estáveis;
+// 5) calcula a concentração final pela curva de calibração.
+//
+// Se a estabilização não for confirmada no limite de blocos,
+// o programa ainda usa o último bloco válido, mas marca o resultado
+// como não estabilizado para alertar o usuário.
 ResultadoNO3 lerNitratoEstabilizado() {
   ResultadoNO3 r;
   r.nitrato = 0;
@@ -408,6 +507,9 @@ ResultadoNO3 lerNitratoEstabilizado() {
 
   if (!r.estat.valido) return r;
 
+  // Equação inversa da curva de calibração do ISE.
+  // Como a calibração foi ajustada em log10, retorna-se à concentração
+  // aplicando potência de base 10.
   r.nitrato = pow(10.0, (r.estat.mediaTensao - NO3_B) / NO3_A);
 
   if (isnan(r.nitrato) || isinf(r.nitrato) || r.nitrato < 0.0) return r;
@@ -420,6 +522,7 @@ ResultadoNO3 lerNitratoEstabilizado() {
 // MENU INTERATIVO
 // ============================================================
 
+// Imprime o menu de comandos disponíveis no Monitor Serial.
 void imprimirMenu() {
   Serial.println("====================================================");
   Serial.println("MENU SERIAL");
@@ -447,6 +550,8 @@ void imprimirConfiguracaoAtual() {
   Serial.println();
 }
 
+// Lê os caracteres digitados no Monitor Serial e altera o estado
+// do sistema em tempo real, sem necessidade de regravar o ESP32.
 void processarComandoSerial() {
   while (Serial.available()) {
     char cmd = Serial.read();
@@ -520,6 +625,8 @@ void imprimirCabecalho() {
   Serial.println();
 }
 
+// Impressão expandida: mostra resultados finais e variáveis
+// intermediárias úteis para diagnóstico, validação e calibração.
 void imprimirResultadosDetalhados(float temperatura, ResultadoPH ph, ResultadoEC ec, ResultadoNO3 no3) {
   Serial.println("----------------------------------------------------");
   Serial.print("Ciclo                           : ");
@@ -598,6 +705,7 @@ void imprimirResultadosDetalhados(float temperatura, ResultadoPH ph, ResultadoEC
   Serial.println();
 }
 
+// Impressão compacta: mostra apenas os valores principais.
 void imprimirResultadosResumidos(float temperatura, ResultadoPH ph, ResultadoEC ec, ResultadoNO3 no3) {
   Serial.println("----------------------------------------------------");
   Serial.print("Ciclo ");
@@ -639,6 +747,9 @@ void imprimirResultadosResumidos(float temperatura, ResultadoPH ph, ResultadoEC 
   Serial.println();
 }
 
+// Saída em linha única CSV.
+// Útil para registrar os dados no computador, importar em Excel,
+// LibreOffice Calc, Python ou outro software de análise.
 void imprimirCSV(float temperatura, ResultadoPH ph, ResultadoEC ec, ResultadoNO3 no3) {
   Serial.print(contadorCiclos);
   Serial.print(",");
@@ -666,6 +777,9 @@ void imprimirCSV(float temperatura, ResultadoPH ph, ResultadoEC ec, ResultadoNO3
   Serial.println();
 }
 
+// Gera alertas simples de plausibilidade.
+// Não substitui validação analítica nem limites legais, mas ajuda a
+// identificar leituras suspeitas durante ensaio de bancada ou campo.
 void imprimirAlertas(float temperatura, ResultadoPH ph, ResultadoEC ec, ResultadoNO3 no3) {
   bool houveAlerta = false;
 
@@ -704,6 +818,13 @@ void imprimirAlertas(float temperatura, ResultadoPH ph, ResultadoEC ec, Resultad
 // ============================================================
 // EXECUÇÃO DE UM CICLO DE LEITURA
 // ============================================================
+// Executa um ciclo completo de aquisição.
+// A ordem adotada é importante:
+// 1) temperatura
+// 2) pH
+// 3) EC/TDS
+// 4) nitrato
+// Depois, o sistema imprime resultados, alertas e CSV opcional.
 void executarCicloLeitura() {
   contadorCiclos++;
 
@@ -744,6 +865,8 @@ void executarCicloLeitura() {
 // ============================================================
 // SETUP
 // ============================================================
+// Setup: inicializa comunicação serial, ADC e sensor de temperatura,
+// registra o instante inicial do programa e mostra a interface.
 void setup() {
   Serial.begin(SERIAL_BAUD);
   delay(1200);
@@ -772,6 +895,12 @@ void setup() {
 // ============================================================
 // LOOP
 // ============================================================
+// Loop principal:
+// - processa comandos do usuário;
+// - respeita o estado de pausa;
+// - executa um ciclo de leitura;
+// - se a opção era leitura única, pausa após o ciclo;
+// - aguarda até o próximo ciclo, mantendo o menu responsivo.
 void loop() {
   processarComandoSerial();
 
