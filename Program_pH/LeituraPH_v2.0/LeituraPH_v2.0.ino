@@ -1,4 +1,4 @@
-#define PH_PIN 34
+#define PH_PIN 33
 
 float slope = -9.0909;
 float intercept = 21.86;

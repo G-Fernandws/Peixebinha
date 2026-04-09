@@ -1,4 +1,4 @@
-#define PINO_PH 34
+#define PINO_PH 33
 
 float lerTensaoFiltrada() {
   const int N = 50;

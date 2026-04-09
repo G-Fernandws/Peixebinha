@@ -113,7 +113,7 @@ DallasTemperature sensorTemp(&oneWire);
 // Nitrato:
 // A concentração é obtida por relação exponencial inversa da curva
 // ajustada em log10, compatível com comportamento típico do tipo de sensor, ISE.
-#define PH_PIN 34
+#define PH_PIN 33
 const float PH_SLOPE_25C     = -9.0909;
 const float PH_INTERCEPT_25C = 21.86;
 const float PH_TEMP_CAL      = 25.0;
