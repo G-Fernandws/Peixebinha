@@ -1,23 +1,5 @@
 /*
-  ============================================================
-  CALIBRACAO DO SENSOR ION-SELETIVO DE AMONIA - ESP32
-  ============================================================
 
-  Sensor analogico: GPIO 34
-  Pontos de calibracao: 10, 25, 50, 75 e 100 mg/L
-
-  Modelo de ajuste:
-  V = a * log10(C) + b
-
-  Equacao inversa:
-  C = 10^((V - b) / a)
-
-  ------------------------------------------------------------
-  OBSERVACAO
-  Esta rotina considera apenas a resposta empirica do sensor
-  frente aos padroes preparados, sem compensacao de pH ou
-  temperatura.
-*/
 
 #define NH3_PIN 33
 

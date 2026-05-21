@@ -8,11 +8,15 @@ Sensores:
 
 
 PINOS DOS SENSORES NA PROGRAMAÇÃO PRINCIPAL
-  pH 				gpio 34
+ pH 						gpio 35
 
-&nbsp;	Condutividade 	gpio 32
+&nbsp;	Condutividade 	gpio 34
 
-&nbsp;	Trubidez			gpio 35
+&nbsp;	Trubidez			gpio 26 (temporário)
+
+&nbsp;	Nitrato			gpio 32
+
+&nbsp;	Amônia			gpio 33 (temporário)
 
 &nbsp;	Temperatura		gpio 4
 
